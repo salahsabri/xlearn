@@ -56,6 +56,11 @@ from tensorflow.python.keras.models import Sequential, Model
 from tensorflow.python.keras.layers import Dense, Reshape, Flatten, \
     Dropout, Input, concatenate, Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose, Activation
 from tensorflow.python.keras.utils import multi_gpu_model
+from keras.layers import Conv2D, Input, MaxPooling2D, ZeroPadding2D,Convolution3D,Concatenate, MaxPooling3D, GlobalAveragePooling3D,Conv3DTranspose, Dense
+from keras.layers.normalization import BatchNormalization
+from keras.layers.merge import concatenate
+from keras.models import Model
+from keras.regularizers import l2
 
 # from keras.models import Sequential, Model
 # from keras.layers import Dense, Reshape, Flatten, \
@@ -121,7 +126,6 @@ def classifier(ih, iw, nb_conv, size_conv, nb_classes):
 
     return mdl
 
-
 def transformer2(ih, iw, nb_conv, size_conv, nb_gpu = 1):
     """
     The simple cnn model for image transformation with 2 times of downsampling. It is a choice for fast running.
@@ -182,6 +186,7 @@ def transformer2(ih, iw, nb_conv, size_conv, nb_gpu = 1):
 
     return mdl
 
+   
 def transformer3_pooling(ih, iw, nb_conv, size_conv, nb_gpu):
 
     """
@@ -475,3 +480,84 @@ def psnr(y_true, y_pred):
     The cost function by computing the psnr.
     """
     return 1/(10.0 * tf.log(1.0 / (tf.mean(tf.square(y_pred - y_true)))) / tf.log(10.0))
+
+
+def transformer_3CNN(ih, iw,idim, nb_conv, size_conv, nb_gpu):
+
+    """
+    The cnn image transformation model with 3 times of downsampling. The downsampling uses maxpooling.
+
+    Parameters
+    ----------
+    ih, iw : int
+        The input image dimension
+
+    nb_conv : int
+        Number of convolution kernels for each layer
+
+    size_conv : int
+        The size of convolution kernel
+    Returns
+    -------
+    mdl
+        Description.
+
+    """
+
+    inputs = Input((ih, iw, idim))
+    
+    conv1 =Convolution3D(nb_conv, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv1', kernel_regularizer=l2(regularize_weight))(inputs)
+    conv1 =Convolution3D(nb_conv, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv1', kernel_regularizer=l2(regularize_weight))(conv1)
+    pool1 =MaxPooling3D(pool_size=(3, 3, 3), strides=(2, 2, 2), name='maxpool1', padding="valid")(conv1)
+    
+    conv2 =Convolution3D(nb_conv* 2, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv2', kernel_regularizer=l2(regularize_weight))(pool1)
+    conv2 =Convolution3D(nb_conv* 2, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv2', kernel_regularizer=l2(regularize_weight))(conv2)
+    pool2 =MaxPooling3D(pool_size=(3, 3, 3), strides=(2, 2, 2), name='maxpool2', padding="valid")(conv2)
+    
+    
+    conv3 =Convolution3D(nb_conv* 2, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv3', kernel_regularizer=l2(regularize_weight))(pool2)
+    conv3 =Convolution3D(nb_conv* 2, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv3', kernel_regularizer=l2(regularize_weight))(conv3)
+    pool3 =MaxPooling3D(pool_size=(3, 3, 3), strides=(2, 2, 2), name='maxpool3', padding="valid")(conv3)
+    
+  
+    conv4 =Convolution3D(nb_conv* 4, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv4', kernel_regularizer=l2(regularize_weight))(pool3)
+    conv4 =Convolution3D(nb_conv* 4, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv4', kernel_regularizer=l2(regularize_weight))(conv4)
+    conv4 =Convolution3D(1, kernel_size=(3, 5, 5), strides=(1, 1, 1), padding="same", activation="relu", name='conv4', kernel_regularizer=l2(regularize_weight))(conv4)
+    
+    
+    #
+    fc1 = Flatten()(conv4)
+    fc1 = Dense(iw * ih / 128, activation='relu')(fc1)
+    fc1 = Dropout(0.2)(fc1)
+    fc1 = Dense(iw * ih / 128, activation='relu')(fc1)
+    fc1 = Dropout(0.25)(fc1)
+    fc1 = Dense(iw * ih / 64, activation='relu')(fc1)
+    fc1 = Dropout(0.25)(fc1)
+    fc1 = Reshape((int(ih // 8), int(iw // 8), 1))(fc1)
+
+    fc2 = Conv3DTranspose(nb_conv * 4, kernel_size=(3, 5, 5), activation='relu', padding='same')(fc1)
+    fc2 = Conv3DTranspose(nb_conv * 8, kernel_size=(3, 5, 5), activation='relu', padding='same')(fc2)
+
+    up1 = concatenate([UpSampling3D(size=(2, 2,2))(fc2), conv3], axis=3)
+    
+    conv6 = Conv3DTranspose(nb_conv * 2, kernel_size=(3, 5, 5), activation='relu', padding='same')(up1)
+    conv6 = Conv3DTranspose(nb_conv * 2, kernel_size=(3, 5, 5), activation='relu', padding='same')(conv6)
+
+    up2 = concatenate([UpSampling3D(size=(2, 2,2))(conv6), conv2], axis=3)
+
+    conv7 = Conv3DTranspose(nb_conv * 2, kernel_size=(3, 5, 5), activation='relu', padding='same')(up2)
+    conv7 = Conv3DTranspose(nb_conv * 2,kernel_size=(3, 5, 5), activation='relu', padding='same')(conv7)
+
+    up3 = concatenate([UpSampling3D(size=(2, 2,2))(conv7), conv1], axis=3)
+
+    conv8 = Conv3DTranspose(nb_conv, kernel_size=(3, 5, 5), activation='relu', padding='same')(up3)
+    conv8 = Conv3DTranspose(nb_conv, kernel_size=(3, 5, 5), activation='relu', padding='same')(conv8)
+
+    conv8 = Conv3DTranspose(1, kernel_size=(3, 5, 5), activation='relu', padding='same')(conv8)
+
+    mdl = Model(inputs=inputs, outputs=conv8)
+    if nb_gpu > 1:
+        mdl = multi_gpu_model(mdl, nb_gpu)
+
+    mdl.compile(loss='mse', optimizer='Adam')
+    return mdl
